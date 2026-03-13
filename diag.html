@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head><title>Diag</title></head>
+<body style="background:#111;color:#0f0;font:14px monospace;padding:20px;width:100%;height:100%;margin:0">
+<pre id="log" style="position:relative;z-index:9999"></pre>
+<script type="module">
+const log = document.getElementById('log');
+function L(msg) { log.textContent += msg + '\n'; console.log(msg); }
+
+try {
+  L('1. Importing pixi.js...');
+  const { Application, Assets, Sprite, Container, Text, TextStyle, Graphics } = await import('pixi.js');
+  L('   OK');
+
+  L('2. Creating app...');
+  const app = new Application();
+  await app.init({ width: 800, height: 600, backgroundColor: 0x1a0a2e, antialias: true });
+  document.body.appendChild(app.canvas);
+  L('   OK, canvas: ' + app.canvas.width + 'x' + app.canvas.height);
+
+  L('3. Importing config...');
+  const { ALL_SYMBOL_IDS, DESIGN_WIDTH, DESIGN_HEIGHT, BET_STEPS, BONUS_BUY_STANDARD, BONUS_BUY_SUPER } = await import('./src/config/gameConfig.ts');
+  L('   OK - symbols: ' + ALL_SYMBOL_IDS.join(', '));
+
+  L('4. Testing individual asset loads...');
+  const allAssets = [
+    'bg','bg_freespins','logo','spin_btn',
+    'major_star','major_heart','major_crystal','minor_red','minor_green','minor_purple','minor_yellow','scatter',
+    'nice_win','big_win','mega_win','epic_win','super_win','coins_vfx',
+    'buy_btn','buy_super_btn',
+    'spin_btn_3d','bottom_panel','btn_minus','btn_plus','buy_fs_box','buy_super_box','auto_btn_cookie','balance_frame'
+  ];
+  
+  const failedAssets = [];
+  for (const name of allAssets) {
+    try {
+      const tex = await Assets.load({ alias: name, src: `assets/sprites/${name}.webp` });
+      L(`   OK: ${name} (${tex.width}x${tex.height})`);
+    } catch(e) {
+      L(`   FAIL: ${name} - ${e.message}`);
+      failedAssets.push(name);
+    }
+  }
+  
+  if (failedAssets.length > 0) {
+    L('\nFailed assets: ' + failedAssets.join(', '));
+    L('Skipping scene init due to failed assets.');
+  } else {
+    L('\nAll assets loaded OK!');
+  }
+
+  L('5. Testing Assets.get...');
+  const testKeys = ['bg', 'spin_btn_3d', 'bottom_panel', 'btn_minus', 'major_heart', 'scatter'];
+  for (const k of testKeys) {
+    const tex = Assets.get(k);
+    L(`   ${k}: ${tex ? tex.width + 'x' + tex.height : 'NULL'}`);
+  }
+
+  L('6. Importing GameScene...');
+  const { GameScene } = await import('./src/scenes/GameScene.ts');
+  L('   OK');
+
+  L('7. Creating GameScene...');
+  const scene = new GameScene(app);
+  L('   Constructor OK');
+
+  L('8. scene.init()...');
+  await scene.init();
+  L('   INIT OK - Game should be visible!');
+
+} catch(e) {
+  L('ERROR: ' + e.stack);
+}
+</script>
+</body>
+</html>

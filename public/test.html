@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head><title>Asset Test</title></head>
+<body style="background:#111;color:#0f0;font:14px monospace;padding:20px">
+<pre id="log"></pre>
+<script type="module">
+const log = document.getElementById('log');
+function L(msg) { log.textContent += msg + '\n'; console.log(msg); }
+
+L('Testing asset loading...');
+
+const assets = [
+  'bg.webp','spin_btn_3d.webp','bottom_panel.webp','btn_minus.webp',
+  'btn_plus.webp','buy_fs_box.webp','buy_super_box.webp','auto_btn_cookie.webp',
+  'balance_frame.webp','major_heart.webp','scatter.webp'
+];
+
+for (const name of assets) {
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = 'assets/sprites/' + name;
+    });
+    L(`OK: ${name} (${img.naturalWidth}x${img.naturalHeight})`);
+  } catch(e) {
+    L(`FAIL: ${name} - ${e}`);
+  }
+}
+
+L('\nNow testing PixiJS...');
+try {
+  const { Application, Assets, Sprite, Container, Text, TextStyle, Graphics } = await import('/node_modules/.vite/deps/pixi__js.js?v=*');
+  L('PixiJS import failed - trying direct...');
+} catch(e) {
+  L('Direct import failed: ' + e.message);
+}
+
+try {
+  const pixi = await import('pixi.js');
+  L('PixiJS loaded: ' + Object.keys(pixi).slice(0,10).join(', '));
+  
+  const app = new pixi.Application();
+  await app.init({ width: 400, height: 300, backgroundColor: 0x1a0a2e });
+  document.body.appendChild(app.canvas);
+  L('PixiJS app created');
+  
+  // Test TextStyle
+  const style = new pixi.TextStyle({
+    fontFamily: 'Arial',
+    fontSize: 20,
+    fill: 0xffd700,
+    stroke: { color: 0x4a2010, width: 3 },
+    dropShadow: { color: 0x000000, blur: 3, distance: 2, alpha: 0.7 },
+  });
+  const text = new pixi.Text({ text: 'Hello', style });
+  app.stage.addChild(text);
+  L('Text created OK');
+  
+} catch(e) {
+  L('PixiJS test error: ' + e.stack);
+}
+</script>
+</body>
+</html>
