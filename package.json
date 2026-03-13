@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "postbuild": "rm -f sweet-cascade-1024.zip && cd dist && zip -r ../sweet-cascade-1024.zip . && echo 'Zipped to sweet-cascade-1024.zip'",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,0 +1,259 @@
+{
+  "id": "sweet-cascade-1024",
+  "type": "SLOT",
+  "version": "1.0.0",
+  "rtp": "96.5",
+  "engine_mode": "lua",
+  "script_path": "games/sweet-cascade/script.lua",
+  "viewport": {
+    "width": 7,
+    "height": 7
+  },
+  "stages": [
+    "base_game",
+    "free_spins"
+  ],
+  "bet_levels": [
+      0.2,
+      0.4,
+      1,
+      2,
+      4,
+      10,
+      20,
+      50,
+      100,
+      200
+    ],
+  "max_win": {
+    "multiplier": 25000
+  },
+  "symbols": {
+    "MAJOR_STAR": {
+      "id": 1
+    },
+    "MAJOR_HEART": {
+      "id": 2
+    },
+    "MAJOR_CRYSTAL": {
+      "id": 3
+    },
+    "MINOR_RED": {
+      "id": 4
+    },
+    "MINOR_GREEN": {
+      "id": 5
+    },
+    "MINOR_PURPLE": {
+      "id": 6
+    },
+    "MINOR_YELLOW": {
+      "id": 7
+    },
+    "SCATTER": {
+      "id": 8,
+      "is_scatter": true
+    }
+  },
+  "free_spins_trigger": {
+    "3": 10,
+    "4": 12,
+    "5": 15,
+    "6": 20,
+    "7": 30
+  },
+  "free_spins_retrigger": {
+    "3": 10,
+    "4": 12,
+    "5": 15,
+    "6": 20,
+    "7": 30
+  },
+  "buy_bonus": {
+    "modes": {
+      "default": {
+        "cost_multiplier": 100,
+        "scatter_distribution": {
+          "3": 70,
+          "4": 18,
+          "5": 8,
+          "6": 3,
+          "7": 1
+        }
+      },
+      "super": {
+        "cost_multiplier": 500,
+        "scatter_distribution": {
+          "3": 70,
+          "4": 18,
+          "5": 8,
+          "6": 3,
+          "7": 1
+        }
+      }
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string"
+      },
+      "spinResult": {
+        "type": "object"
+      },
+      "bonus": {
+        "type": "object"
+      },
+      "scatterBoost": {
+        "type": "number"
+      }
+    }
+  },
+  "logic": {},
+  "actions": {
+    "spin": {
+      "stage": "base_game",
+      "debit": "bet",
+      "credit": "win",
+      "transitions": [
+        {
+          "condition": "max_win_reached == 1",
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        },
+        {
+          "condition": "free_spins_remaining > 0",
+          "creates_session": true,
+          "next_actions": [
+            "free_spin"
+          ],
+          "session_config": {
+            "total_spins_var": "free_spins_remaining",
+            "persistent_vars": [
+              "free_spins_scatter_boost",
+              "free_spins_total_win",
+              "free_spins_super_mode"
+            ]
+          }
+        },
+        {
+          "condition": "always",
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        }
+      ]
+    },
+    "buy_bonus": {
+      "stage": "base_game",
+      "debit": "buy_bonus_cost",
+      "buy_bonus_mode": "default",
+      "credit": "win",
+      "transitions": [
+        {
+          "condition": "free_spins_remaining > 0",
+          "creates_session": true,
+          "next_actions": [
+            "free_spin"
+          ],
+          "session_config": {
+            "total_spins_var": "free_spins_remaining",
+            "persistent_vars": [
+              "free_spins_scatter_boost",
+              "free_spins_total_win",
+              "free_spins_super_mode"
+            ]
+          }
+        },
+        {
+          "condition": "always",
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        }
+      ]
+    },
+    "buy_bonus_super": {
+      "stage": "base_game",
+      "debit": "buy_bonus_cost",
+      "buy_bonus_mode": "super",
+      "credit": "win",
+      "transitions": [
+        {
+          "condition": "free_spins_remaining > 0",
+          "creates_session": true,
+          "next_actions": [
+            "free_spin"
+          ],
+          "session_config": {
+            "total_spins_var": "free_spins_remaining",
+            "persistent_vars": [
+              "free_spins_scatter_boost",
+              "free_spins_total_win",
+              "free_spins_super_mode"
+            ]
+          }
+        },
+        {
+          "condition": "always",
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        }
+      ]
+    },
+    "free_spin": {
+      "stage": "free_spins",
+      "debit": "none",
+      "credit": "win",
+      "requires_session": true,
+      "transitions": [
+        {
+          "condition": "max_win_reached == 1",
+          "complete_session": true,
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        },
+        {
+          "condition": "retrigger_spins > 0",
+          "add_spins_var": "retrigger_spins",
+          "next_actions": [
+            "free_spin"
+          ]
+        },
+        {
+          "condition": "free_spins_remaining > 1",
+          "next_actions": [
+            "free_spin"
+          ]
+        },
+        {
+          "condition": "always",
+          "complete_session": true,
+          "next_actions": [
+            "spin",
+            "buy_bonus",
+            "buy_bonus_super"
+          ]
+        }
+      ]
+    }
+  }
+}

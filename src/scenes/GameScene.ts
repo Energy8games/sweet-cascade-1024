@@ -10,18 +10,17 @@ import {
   GRID_COLS, GRID_ROWS, TOTAL_CELLS,
   SYMBOLS, BET_STEPS, ALL_SYMBOL_IDS,
   BONUS_BUY_STANDARD, BONUS_BUY_SUPER,
-  FREE_SPINS_TABLE, DESIGN_WIDTH, DESIGN_HEIGHT,
+  DESIGN_WIDTH, DESIGN_HEIGHT,
   getMultiplierColor, CLUSTER_PAYOUTS, MIN_CLUSTER_SIZE,
-  FS_SCATTER_BOOST_STANDARD, FS_SCATTER_BOOST_SUPER, MAX_WIN_MULTIPLIER,
 } from '../config/gameConfig';
-import type { PlayResultData } from '@energy8platform/game-sdk';
+import type { PlayResultData, SessionData } from '@energy8platform/game-sdk';
 import type { CellData, Cluster } from '../engine/ClusterEngine';
 import { findClusters, getWinningPositions } from '../engine/ClusterEngine';
-import { cascadeGrid, generateGrid, countScatters, generateBonusBuyGrid } from '../engine/CascadeEngine';
-import { MultiplierGrid, type MultiplierSpot } from '../engine/MultiplierSystem';
-import { resolveSpin, type SpinResult, type CascadeStep } from '../engine/SpinResolver';
+import { generateGrid, countScatters } from '../engine/CascadeEngine';
+import { MultiplierGrid } from '../engine/MultiplierSystem';
+import type { SpinResult, CascadeStep } from '../engine/SpinResolver';
 import { getAudioManager, getGameSdk, getInputManager } from '../runtime/gameRuntime';
-import type { BuyBonusData, FreeSpinState, GamePlayData, SerializedSpinResult } from '../runtime/sdkPlayTransport';
+import type { BuyBonusData, GamePlayData, SerializedSpinResult } from '../runtime/sdkPlayTransport';
 import { deserializeSpinResult } from '../runtime/sdkPlayTransport';
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -32,7 +31,7 @@ export class GameScene extends Scene {
 
   /* ─── State ────────────────────────────────────────────────── */
   private grid: CellData[] = [];
-  private balance = 100000;
+  private balance = 0;
   private betIndex = 3;
   private lastWin = 0;
   private spinning = false;
@@ -114,6 +113,15 @@ export class GameScene extends Scene {
       letterSpacing: 1,
       ...opts,
     });
+  }
+
+  private asNumber(value: unknown, fallback = 0): number {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : fallback;
+  }
+
+  private formatCurrency(value: unknown, digits = 2): string {
+    return `$${this.asNumber(value).toFixed(digits)}`;
   }
 
   /* ─── Scene lifecycle ───────────────────────────────────────── */
@@ -241,7 +249,7 @@ export class GameScene extends Scene {
     balanceBlock.addChild(this.balanceLabel);
 
     this.balanceValueLabel = new Text({
-      text: `$${this.balance.toFixed(2)}`,
+      text: this.formatCurrency(this.balance),
       style: this.candyStyle(18, 0xffd700),
     });
     this.balanceValueLabel.anchor.set(0.5, 0.5);
@@ -276,7 +284,7 @@ export class GameScene extends Scene {
     betBlock.addChild(this.betLabel);
 
     this.betValueLabel = new Text({
-      text: `$${this.currentBet.toFixed(2)}`,
+      text: this.formatCurrency(this.currentBet),
       style: this.candyStyle(18, 0xffd700),
     });
     this.betValueLabel.anchor.set(0.5, 0.5);
@@ -807,7 +815,7 @@ export class GameScene extends Scene {
   private changeBet(dir: number) {
     if (this.spinning || this.inFreeSpins) return;
     this.betIndex = Math.max(0, Math.min(BET_STEPS.length - 1, this.betIndex + dir));
-    this.betValueLabel.text = `$${this.currentBet.toFixed(2)}`;
+    this.betValueLabel.text = this.formatCurrency(this.currentBet);
   }
 
   /* ─── Audio ────────────────────────────────────────────────── */
@@ -853,10 +861,6 @@ export class GameScene extends Scene {
     text.text = this.autoplayActive ? `${this.autoplayRemaining}` : 'AUTO';
   }
 
-  private getMultiplierState(): MultiplierSpot[] {
-    return this.multiplierGrid.spots.map((spot) => ({ ...spot }));
-  }
-
   private async playViaSdk(action: string, bet: number, params: Record<string, unknown> = {}): Promise<PlayResultData> {
     const sdk = getGameSdk();
     if (!sdk) {
@@ -871,28 +875,27 @@ export class GameScene extends Scene {
     });
   }
 
-  private getSpinPlayState(): FreeSpinState | { multiplierSpots: MultiplierSpot[]; scatterBoost: number } {
-    if (this.inFreeSpins) {
-      return {
-        multiplierSpots: this.getMultiplierState(),
-        scatterBoost: this.fsScatterBoost,
-        freeSpinsRemaining: this.freeSpinsRemaining,
-        freeSpinsTotalWin: this.freeSpinsTotalWin,
-      };
-    }
-
-    return {
-      multiplierSpots: this.getMultiplierState(),
-      scatterBoost: this.fsScatterBoost,
-    };
-  }
-
   private extractGamePlayData(result: PlayResultData): GamePlayData {
     const data = result.data as Partial<GamePlayData>;
     if (!data || (data.kind !== 'spin' && data.kind !== 'buy_bonus')) {
       throw new Error('SDK play result is missing supported game data');
     }
     return data as GamePlayData;
+  }
+
+  private getActiveSession(result?: PlayResultData): SessionData | null {
+    return result?.session ?? getGameSdk()?.session ?? null;
+  }
+
+  private syncFreeSpinStateFromSession(session: SessionData | null) {
+    if (!session) {
+      return;
+    }
+
+    this.currentRoundId = session.roundId;
+    this.freeSpinsRemaining = session.spinsRemaining;
+    this.freeSpinsTotalWin = session.totalWin;
+    this.updateFreeSpinsLabel();
   }
 
   private async finalizePlayResult(result: PlayResultData) {
@@ -916,23 +919,17 @@ export class GameScene extends Scene {
       this.clearMultiplierDisplay();
     }
 
-    const playResult = await this.playViaSdk(
-      this.inFreeSpins ? 'free_spin' : 'spin',
-      bet,
-      {
-        state: this.getSpinPlayState(),
-        spinsPlayed: this.inFreeSpins ? ((getGameSdk()?.session?.spinsPlayed ?? 0)) : undefined,
-        history: this.inFreeSpins ? (getGameSdk()?.session?.history ?? []) : undefined,
-      },
-    );
+    const playResult = await this.playViaSdk(this.inFreeSpins ? 'free_spin' : 'spin', bet);
     const playData = this.extractGamePlayData(playResult);
     if (playData.kind !== 'spin') {
       throw new Error(`Unexpected play data kind: ${playData.kind}`);
     }
     const spinResult = deserializeSpinResult(playData.spinResult as SerializedSpinResult);
-    this.currentRoundId = playResult.roundId;
+    const session = this.getActiveSession(playResult);
+    const wasInFreeSpins = this.inFreeSpins;
     this.balance = playResult.balanceAfter;
     this.updateBalanceDisplay();
+    this.currentRoundId = playResult.roundId;
 
     // Animate the cascades
     await this.animateSpinResult(spinResult);
@@ -948,22 +945,19 @@ export class GameScene extends Scene {
     }
 
     // Check for free spins trigger
-    if (spinResult.freeSpinsAwarded > 0 && !this.inFreeSpins) {
-      await this.startFreeSpins(spinResult.freeSpinsAwarded, false);
-    } else if (spinResult.freeSpinsAwarded > 0 && this.inFreeSpins) {
+    if (!wasInFreeSpins && session && session.spinsRemaining > 0) {
+      await this.startFreeSpins(session.spinsRemaining, false, session.totalWin);
+    } else if (spinResult.freeSpinsAwarded > 0 && wasInFreeSpins) {
       // Retrigger
-      this.freeSpinsRemaining += spinResult.freeSpinsAwarded;
       this.playSound('scatter_sfx');
       await this.showAnnouncementText(`+${spinResult.freeSpinsAwarded} FREE SPINS!`, 0xff69b4);
     }
 
     // Free spins flow
     if (this.inFreeSpins) {
-      this.freeSpinsTotalWin += spinResult.totalWin;
-      this.freeSpinsRemaining--;
-      this.updateFreeSpinsLabel();
+      this.syncFreeSpinStateFromSession(session);
 
-      if (this.freeSpinsRemaining <= 0) {
+      if (!session || session.completed || session.spinsRemaining <= 0) {
         await this.endFreeSpins();
       }
     } else {
@@ -1306,7 +1300,7 @@ export class GameScene extends Scene {
   /* ─── Win display ──────────────────────────────────────────── */
   private async showWinAmount(amount: number, bet: number) {
     const mult = amount / bet;
-    this.winValueLabel.text = `$${amount.toFixed(2)}`;
+    this.winValueLabel.text = this.formatCurrency(amount);
     await Tween.to(this.winValueLabel, { alpha: 1 }, 300);
 
     if (mult >= 10) {
@@ -1347,7 +1341,7 @@ export class GameScene extends Scene {
 
     // Amount text
     const amountText = new Text({
-      text: `$${amount.toFixed(2)}`,
+      text: this.formatCurrency(amount),
       style: this.candyStyle(48, 0xffd700),
     });
     amountText.anchor.set(0.5);
@@ -1456,11 +1450,11 @@ export class GameScene extends Scene {
   }
 
   /* ─── Free spins ───────────────────────────────────────────── */
-  private async startFreeSpins(count: number, superMode: boolean) {
+  private async startFreeSpins(count: number, superMode: boolean, totalWin = 0) {
     this.inFreeSpins = true;
     this.freeSpinsSuperMode = superMode;
     this.freeSpinsRemaining = count;
-    this.freeSpinsTotalWin = 0;
+    this.freeSpinsTotalWin = totalWin;
     // Natural FS from base game uses default retrigger rate
     if (this.fsScatterBoost <= 1) this.fsScatterBoost = 1;
 
@@ -1562,7 +1556,7 @@ export class GameScene extends Scene {
 
     // Win amount — big golden number
     const winText = new Text({
-      text: `$${totalWin.toFixed(2)}`,
+      text: this.formatCurrency(totalWin),
       style: this.candyStyle(52, 0xffd700),
     });
     winText.anchor.set(0.5);
@@ -1573,7 +1567,7 @@ export class GameScene extends Scene {
 
     // Win multiplier
     const multText = new Text({
-      text: `x${(totalWin / this.currentBet).toFixed(1)}`,
+      text: `x${this.asNumber(totalWin / this.currentBet).toFixed(1)}`,
       style: this.candyStyle(22, 0xff69b4),
     });
     multText.anchor.set(0.5);
@@ -1601,7 +1595,7 @@ export class GameScene extends Scene {
   }
 
   private updateFreeSpinsLabel() {
-    this.freeSpinsLabel.text = `FREE SPINS: ${this.freeSpinsRemaining}  WIN: $${this.freeSpinsTotalWin.toFixed(2)}`;
+    this.freeSpinsLabel.text = `FREE SPINS: ${this.asNumber(this.freeSpinsRemaining, 0)}  WIN: ${this.formatCurrency(this.freeSpinsTotalWin)}`;
     this.freeSpinsLabel.alpha = 1;
   }
 
@@ -1626,16 +1620,14 @@ export class GameScene extends Scene {
     this.spinning = true;
     this.setButtonsEnabled(false);
 
-    const playResult = await this.playViaSdk('buy_bonus', cost, {
-      superMode,
-      betAmount: this.currentBet,
-    });
+    const playResult = await this.playViaSdk(superMode ? 'buy_bonus_super' : 'buy_bonus', this.currentBet);
     const playData = this.extractGamePlayData(playResult);
     if (playData.kind !== 'buy_bonus') {
       throw new Error(`Unexpected buy bonus payload: ${playData.kind}`);
     }
     const bonusData = playData.bonus as BuyBonusData;
     const bonusGrid = bonusData.bonusGrid;
+    const session = this.getActiveSession(playResult);
     this.balance = playResult.balanceAfter;
     this.updateBalanceDisplay();
     this.currentRoundId = playResult.roundId;
@@ -1656,7 +1648,8 @@ export class GameScene extends Scene {
     this.fsScatterBoost = bonusData.scatterBoost;
 
     // Now start free spins
-    await this.startFreeSpins(freeSpins, superMode);
+    await this.startFreeSpins(session?.spinsRemaining ?? freeSpins, superMode, session?.totalWin ?? 0);
+    this.syncFreeSpinStateFromSession(session);
 
     // Begin first free spin
     this.spinning = false;
@@ -1722,7 +1715,7 @@ export class GameScene extends Scene {
 
       // Cost amount
       const costText = new Text({
-        text: `$${cost.toFixed(2)}`,
+        text: this.formatCurrency(cost),
         style: this.candyStyle(36, superMode ? 0xffd700 : 0x44ff88),
       });
       costText.anchor.set(0.5);
@@ -1998,7 +1991,7 @@ export class GameScene extends Scene {
 
   /* ─── UI helpers ───────────────────────────────────────────── */
   private updateBalanceDisplay() {
-    this.balanceValueLabel.text = `$${this.balance.toFixed(2)}`;
+    this.balanceValueLabel.text = this.formatCurrency(this.balance);
   }
 
   /** Applies expanded invisible hit area (factor > 1 gives bigger click zone) */
