@@ -4,7 +4,7 @@
 import { Scene, Tween, Easing } from '@energy8platform/game-engine';
 import {
   Container, Sprite, Graphics, Text, TextStyle,
-  Assets, Texture, FederatedPointerEvent,
+  Assets, Texture, FederatedPointerEvent, Circle,
 } from 'pixi.js';
 import {
   GRID_COLS, GRID_ROWS, TOTAL_CELLS,
@@ -14,11 +14,15 @@ import {
   getMultiplierColor, CLUSTER_PAYOUTS, MIN_CLUSTER_SIZE,
   FS_SCATTER_BOOST_STANDARD, FS_SCATTER_BOOST_SUPER, MAX_WIN_MULTIPLIER,
 } from '../config/gameConfig';
+import type { PlayResultData } from '@energy8platform/game-sdk';
 import type { CellData, Cluster } from '../engine/ClusterEngine';
 import { findClusters, getWinningPositions } from '../engine/ClusterEngine';
 import { cascadeGrid, generateGrid, countScatters, generateBonusBuyGrid } from '../engine/CascadeEngine';
-import { MultiplierGrid } from '../engine/MultiplierSystem';
+import { MultiplierGrid, type MultiplierSpot } from '../engine/MultiplierSystem';
 import { resolveSpin, type SpinResult, type CascadeStep } from '../engine/SpinResolver';
+import { getAudioManager, getGameSdk, getInputManager } from '../runtime/gameRuntime';
+import type { BuyBonusData, FreeSpinState, GamePlayData, SerializedSpinResult } from '../runtime/sdkPlayTransport';
+import { deserializeSpinResult } from '../runtime/sdkPlayTransport';
 
 /* ═══════════════════════════════════════════════════════════════ */
 export class GameScene extends Scene {
@@ -41,6 +45,16 @@ export class GameScene extends Scene {
   private autoplayRemaining = 0;
   private bonusBuyDrop = false;
   private muted = false;
+  private currentRoundId: string | null = null;
+  private freeSpinsSuperMode = false;
+  private readonly onSpaceSpin = ({ code }: { code: string; key: string }) => {
+    if (code !== 'Space') return;
+    void this.onSpinPress();
+  };
+  private readonly onBalanceUpdate = ({ balance }: { balance: number }) => {
+    this.balance = balance;
+    this.updateBalanceDisplay();
+  };
 
   /* ─── Display layers ───────────────────────────────────────── */
   private bgSprite!: Sprite;
@@ -81,9 +95,6 @@ export class GameScene extends Scene {
   private paytableBtn!: Container;
   private muteBtn!: Container;
 
-  /* Audio state */
-  private bgmPlaying = false;
-
   /* ─── Candy font style factory ─────────────────────────────── */
   private static readonly CANDY_FONT = '"Fredoka One", "Baloo 2", "Titan One", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif';
 
@@ -108,10 +119,29 @@ export class GameScene extends Scene {
   /* ─── Scene lifecycle ───────────────────────────────────────── */
   async onEnter() {
     this.grid = generateGrid(true);
+    this.balance = getGameSdk()?.balance ?? this.balance;
     this.buildScene();
     this.buildUI();
     this.layoutAll();
-    this.tryPlayBGM();
+    this.syncMuteState();
+    this.playMusic('bgm');
+    getInputManager()?.on('keydown', this.onSpaceSpin);
+    getGameSdk()?.on('balanceUpdate', this.onBalanceUpdate);
+  }
+
+  async onExit() {
+    this.superPulseActive = false;
+    this.stopMusic();
+    getInputManager()?.off('keydown', this.onSpaceSpin);
+    getGameSdk()?.off('balanceUpdate', this.onBalanceUpdate);
+  }
+
+  onDestroy() {
+    this.superPulseActive = false;
+    this.stopMusic();
+    Tween.killAll();
+    getInputManager()?.off('keydown', this.onSpaceSpin);
+    getGameSdk()?.off('balanceUpdate', this.onBalanceUpdate);
   }
 
   onResize(w: number, h: number) {
@@ -411,6 +441,7 @@ export class GameScene extends Scene {
     const infoLabel = new Text({ text: 'i', style: this.candyStyle(20, 0xffd700) });
     infoLabel.anchor.set(0.5);
     this.paytableBtn.addChild(infoLabel);
+    this.paytableBtn.hitArea = new Circle(0, 0, 24);
     this.addExpandedHitArea(this.paytableBtn, 1.2);
     this.paytableBtn.on('pointerdown', () => {
       this.animateButtonPress(this.paytableBtn);
@@ -433,6 +464,7 @@ export class GameScene extends Scene {
     const muteLabel = new Text({ text: '\uD83D\uDD0A', style: this.candyStyle(18, 0xffd700) });
     muteLabel.anchor.set(0.5);
     this.muteBtn.addChild(muteLabel);
+    this.muteBtn.hitArea = new Circle(0, 0, 24);
     this.addExpandedHitArea(this.muteBtn, 1.2);
     this.muteBtn.on('pointerdown', () => {
       this.animateButtonPress(this.muteBtn);
@@ -624,7 +656,7 @@ export class GameScene extends Scene {
       betBlock.position.set(0, 0);
       this.betLabel.position.set(0, -12);
       this.betValueLabel.position.set(0, 10);
-      const spacing = barW * 0.05;
+      const spacing = Math.max(barW * 0.05, 72);
       this.betMinusBtn.position.set(-spacing, 6);
       this.betPlusBtn.position.set(spacing, 6);
     }
@@ -667,8 +699,8 @@ export class GameScene extends Scene {
     this.buyBtnSuper.position.set(buyCenterX, this.spinBtn.y);
 
     /* ── Paytable + Mute buttons — further left of grid ────── */
-    this.paytableBtn.position.set(this.gridX - 45, this.gridY + 20);
-    this.muteBtn.position.set(this.gridX - 45, this.gridY + 65);
+    this.paytableBtn.position.set(this.gridX - 45, this.gridY + 42);
+    this.muteBtn.position.set(this.gridX - 45, this.gridY + 92);
   }
 
   /* ════════════════════════════════════════════════════════════
@@ -736,7 +768,7 @@ export class GameScene extends Scene {
       betBlock.position.set(0, 0);
       this.betLabel.position.set(0, -10);
       this.betValueLabel.position.set(0, 10);
-      const spacing = barW * 0.07;
+      const spacing = Math.max(barW * 0.07, 64);
       this.betMinusBtn.position.set(-spacing, 6);
       this.betPlusBtn.position.set(spacing, 6);
     }
@@ -752,7 +784,7 @@ export class GameScene extends Scene {
     /* ── Paytable + Mute — below SuperFS and Auto ─────────── */
     const superFsBottom = this.buyBtnSuper.y + buySize * 0.7;
     const autoBottom = this.autoBtn.y + autoSize * 0.6;
-    const iconRowY = Math.max(superFsBottom, autoBottom) + 50;
+    const iconRowY = Math.max(superFsBottom, autoBottom) + 78;
     this.paytableBtn.position.set(this.buyBtnStandard.x, iconRowY);
     this.muteBtn.position.set(this.autoBtn.x, iconRowY);
   }
@@ -779,56 +811,27 @@ export class GameScene extends Scene {
   }
 
   /* ─── Audio ────────────────────────────────────────────────── */
-  private tryPlayBGM() {
-    // Audio will be managed via HTML5 Audio API
-    // BGM playback on first user interaction
-    const startAudio = () => {
-      if (!this.bgmPlaying) {
-        this.bgmPlaying = true;
-        this.playSound('bgm', true, 0.3);
-      }
-      window.removeEventListener('pointerdown', startAudio);
-    };
-    window.addEventListener('pointerdown', startAudio);
+  private playSound(alias: string, category: 'music' | 'sfx' | 'ui' | 'ambient' = 'sfx', volume = 1) {
+    getAudioManager()?.play(alias, category, { volume });
   }
 
-  private audioElements: Map<string, HTMLAudioElement> = new Map();
-
-  private playSound(name: string, loop: boolean = false, volume: number = 0.7): HTMLAudioElement | null {
-    if (this.muted) return null;
-    try {
-      const audio = new Audio(`assets/audio/${name}.mp3`);
-      audio.loop = loop;
-      audio.volume = volume;
-      audio.play().catch(() => {});
-      this.audioElements.set(name, audio);
-      return audio;
-    } catch {
-      return null;
-    }
+  private playMusic(alias: string) {
+    getAudioManager()?.playMusic(alias);
   }
 
-  private stopSound(name: string) {
-    const audio = this.audioElements.get(name);
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      this.audioElements.delete(name);
-    }
+  private stopMusic() {
+    getAudioManager()?.stopMusic();
+  }
+
+  private syncMuteState() {
+    this.muted = getAudioManager()?.muted ?? false;
+    const label = this.muteBtn.getChildAt(2) as Text;
+    label.text = this.muted ? '\uD83D\uDD07' : '\uD83D\uDD0A';
   }
 
   private toggleMute() {
-    this.muted = !this.muted;
-    const label = this.muteBtn.getChildAt(2) as Text;
-    label.text = this.muted ? '\uD83D\uDD07' : '\uD83D\uDD0A';
-    if (this.muted) {
-      for (const [, audio] of this.audioElements) {
-        audio.pause();
-      }
-    } else {
-      // Restart BGM
-      this.playSound('bgm', true, 0.3);
-    }
+    this.muted = getAudioManager()?.toggleMute() ?? this.muted;
+    this.syncMuteState();
   }
 
   /* ─── Autoplay ─────────────────────────────────────────────── */
@@ -850,6 +853,52 @@ export class GameScene extends Scene {
     text.text = this.autoplayActive ? `${this.autoplayRemaining}` : 'AUTO';
   }
 
+  private getMultiplierState(): MultiplierSpot[] {
+    return this.multiplierGrid.spots.map((spot) => ({ ...spot }));
+  }
+
+  private async playViaSdk(action: string, bet: number, params: Record<string, unknown> = {}): Promise<PlayResultData> {
+    const sdk = getGameSdk();
+    if (!sdk) {
+      throw new Error('CasinoGameSDK is not available');
+    }
+
+    return sdk.play({
+      action,
+      bet,
+      roundId: this.currentRoundId ?? undefined,
+      params,
+    });
+  }
+
+  private getSpinPlayState(): FreeSpinState | { multiplierSpots: MultiplierSpot[]; scatterBoost: number } {
+    if (this.inFreeSpins) {
+      return {
+        multiplierSpots: this.getMultiplierState(),
+        scatterBoost: this.fsScatterBoost,
+        freeSpinsRemaining: this.freeSpinsRemaining,
+        freeSpinsTotalWin: this.freeSpinsTotalWin,
+      };
+    }
+
+    return {
+      multiplierSpots: this.getMultiplierState(),
+      scatterBoost: this.fsScatterBoost,
+    };
+  }
+
+  private extractGamePlayData(result: PlayResultData): GamePlayData {
+    const data = result.data as Partial<GamePlayData>;
+    if (!data || (data.kind !== 'spin' && data.kind !== 'buy_bonus')) {
+      throw new Error('SDK play result is missing supported game data');
+    }
+    return data as GamePlayData;
+  }
+
+  private async finalizePlayResult(result: PlayResultData) {
+    getGameSdk()?.playAck(result);
+  }
+
   /* ─── Spin press ───────────────────────────────────────────── */
   private async onSpinPress() {
     if (this.spinning) return;
@@ -862,17 +911,28 @@ export class GameScene extends Scene {
     const bet = this.currentBet;
 
     if (!this.inFreeSpins) {
-      // Deduct bet
-      this.balance -= bet;
-      this.updateBalanceDisplay();
-
       // Reset multipliers for base game
       this.multiplierGrid.reset();
       this.clearMultiplierDisplay();
     }
 
-    // Resolve spin
-    const spinResult = resolveSpin(bet, this.multiplierGrid, MAX_WIN_MULTIPLIER, 0, this.inFreeSpins, this.fsScatterBoost);
+    const playResult = await this.playViaSdk(
+      this.inFreeSpins ? 'free_spin' : 'spin',
+      bet,
+      {
+        state: this.getSpinPlayState(),
+        spinsPlayed: this.inFreeSpins ? ((getGameSdk()?.session?.spinsPlayed ?? 0)) : undefined,
+        history: this.inFreeSpins ? (getGameSdk()?.session?.history ?? []) : undefined,
+      },
+    );
+    const playData = this.extractGamePlayData(playResult);
+    if (playData.kind !== 'spin') {
+      throw new Error(`Unexpected play data kind: ${playData.kind}`);
+    }
+    const spinResult = deserializeSpinResult(playData.spinResult as SerializedSpinResult);
+    this.currentRoundId = playResult.roundId;
+    this.balance = playResult.balanceAfter;
+    this.updateBalanceDisplay();
 
     // Animate the cascades
     await this.animateSpinResult(spinResult);
@@ -881,10 +941,6 @@ export class GameScene extends Scene {
     if (spinResult.scatterCount >= 3 && spinResult.cascadeSteps.length > 0) {
       await this.animateScatterWin(spinResult.cascadeSteps[0].grid, spinResult.scatterCount);
     }
-
-    // Update balance with winnings
-    this.balance += spinResult.totalWin;
-    this.updateBalanceDisplay();
 
     if (spinResult.totalWin > 0) {
       this.lastWin = spinResult.totalWin;
@@ -919,6 +975,8 @@ export class GameScene extends Scene {
     this.spinning = false;
     this.setButtonsEnabled(true);
 
+    await this.finalizePlayResult(playResult);
+
     // Continue autoplay or free spins
     if (this.inFreeSpins && this.freeSpinsRemaining > 0) {
       await Tween.delay(100);
@@ -951,7 +1009,7 @@ export class GameScene extends Scene {
         await this.highlightClusters(step);
 
         // Explode winning symbols
-        this.playSound('cluster_pop', false, 0.5);
+        this.playSound('cluster_pop', 'sfx', 0.5);
         await this.animateExplosions(step.removedPositions);
 
         // Restore multiplier grid to this step's snapshot, then update display
@@ -964,7 +1022,7 @@ export class GameScene extends Scene {
         // Cascade: symbols fall down
         if (i < result.cascadeSteps.length - 1) {
           const nextGrid = result.cascadeSteps[i + 1].grid;
-          this.playSound('cascade_sfx', false, 0.4);
+          this.playSound('cascade_sfx', 'sfx', 0.4);
           await this.animateCascade(step.removedPositions, nextGrid);
         }
       }
@@ -973,7 +1031,7 @@ export class GameScene extends Scene {
 
   /* ─── Animate new grid (initial spin) ──────────────────────── */
   private async animateNewGrid(grid: CellData[]) {
-    this.playSound('spin_sfx', false, 0.5);
+    this.playSound('spin_sfx', 'sfx', 0.5);
     const slow = this.bonusBuyDrop;
 
     // Fade out current symbols
@@ -1252,10 +1310,10 @@ export class GameScene extends Scene {
     await Tween.to(this.winValueLabel, { alpha: 1 }, 300);
 
     if (mult >= 10) {
-      this.playSound('bigwin_sfx', false, 0.8);
+      this.playSound('bigwin_sfx', 'sfx', 0.8);
       await this.showBigWinOverlay(amount, mult);
     } else {
-      this.playSound('win_sfx', false, 0.6);
+      this.playSound('win_sfx', 'sfx', 0.6);
     }
 
     await Tween.delay(600);
@@ -1400,6 +1458,7 @@ export class GameScene extends Scene {
   /* ─── Free spins ───────────────────────────────────────────── */
   private async startFreeSpins(count: number, superMode: boolean) {
     this.inFreeSpins = true;
+    this.freeSpinsSuperMode = superMode;
     this.freeSpinsRemaining = count;
     this.freeSpinsTotalWin = 0;
     // Natural FS from base game uses default retrigger rate
@@ -1414,15 +1473,14 @@ export class GameScene extends Scene {
     }
 
     // Visual transition
-    this.playSound('scatter_sfx', false, 0.8);
+    this.playSound('scatter_sfx', 'sfx', 0.8);
     await this.animateFreeSpinsTransition(true);
     await this.showAnnouncementText(`${count} FREE SPINS!`, 0xff69b4);
 
     this.updateFreeSpinsLabel();
 
     // Switch BGM
-    this.stopSound('bgm');
-    this.playSound('bgm_freespins', true, 0.3);
+    this.playMusic('bgm_freespins');
 
     // Hide buy buttons
     this.buyBtnStandard.alpha = 0;
@@ -1441,17 +1499,18 @@ export class GameScene extends Scene {
     await this.animateFreeSpinsTransition(false);
 
     this.inFreeSpins = false;
+    this.currentRoundId = null;
     this.freeSpinsRemaining = 0;
     this.freeSpinsLabel.alpha = 0;
     this.fsScatterBoost = 1;
+    this.freeSpinsSuperMode = false;
 
     // Reset multipliers
     this.multiplierGrid.reset();
     this.clearMultiplierDisplay();
 
     // Restore BGM
-    this.stopSound('bgm_freespins');
-    this.playSound('bgm', true, 0.3);
+    this.playMusic('bgm');
 
     // Show buy buttons
     this.buyBtnStandard.alpha = 1;
@@ -1564,13 +1623,22 @@ export class GameScene extends Scene {
     const confirmed = await this.showBuyConfirmation(superMode, cost);
     if (!confirmed) return;
 
-    this.balance -= cost;
-    this.updateBalanceDisplay();
     this.spinning = true;
     this.setButtonsEnabled(false);
 
-    // Generate a grid with guaranteed 3+ scatters
-    const bonusGrid = generateBonusBuyGrid();
+    const playResult = await this.playViaSdk('buy_bonus', cost, {
+      superMode,
+      betAmount: this.currentBet,
+    });
+    const playData = this.extractGamePlayData(playResult);
+    if (playData.kind !== 'buy_bonus') {
+      throw new Error(`Unexpected buy bonus payload: ${playData.kind}`);
+    }
+    const bonusData = playData.bonus as BuyBonusData;
+    const bonusGrid = bonusData.bonusGrid;
+    this.balance = playResult.balanceAfter;
+    this.updateBalanceDisplay();
+    this.currentRoundId = playResult.roundId;
     this.grid = bonusGrid;
 
     // Show the grid landing (player sees symbols + scatters dropping in)
@@ -1584,17 +1652,15 @@ export class GameScene extends Scene {
     // Animate scatter glows so player can see them
     await this.animateScatterWin(bonusGrid, scatterCount);
 
-    // Determine free spins from the scatter count
-    const freeSpins = FREE_SPINS_TABLE[Math.min(scatterCount, 7)] ?? 10;
-
-    // Set scatter boost for bonus buy FS retriggers
-    this.fsScatterBoost = superMode ? FS_SCATTER_BOOST_SUPER : FS_SCATTER_BOOST_STANDARD;
+    const freeSpins = bonusData.freeSpinsAwarded;
+    this.fsScatterBoost = bonusData.scatterBoost;
 
     // Now start free spins
     await this.startFreeSpins(freeSpins, superMode);
 
     // Begin first free spin
     this.spinning = false;
+    await this.finalizePlayResult(playResult);
     this.onSpinPress();
   }
 
@@ -1711,7 +1777,7 @@ export class GameScene extends Scene {
 
       confirmBtn.position.set(cx + panelW * 0.28, btnY);
       confirmBtn.on('pointerdown', () => {
-        this.playSound('click_sfx', false, 0.5);
+        this.playSound('spin_sfx', 'ui', 0.2);
         cleanup();
         resolve(true);
       });

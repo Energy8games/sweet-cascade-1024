@@ -17,11 +17,13 @@ function spineStub(): Plugin {
 
 export default defineGameConfig({
   base: './',
+  devBridge: true,
+  devBridgeConfig: './dev.config.ts',
   vite: {
     plugins: [spineStub()],
     server: { port: 3001 },
     build: {
-      target: 'es2022',
+      target: 'esnext',
       outDir: 'dist',
       assetsInlineLimit: 0,
     },

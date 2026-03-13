@@ -1,21 +1,30 @@
 /* ─── Sweet Cascade 1024 — Entry Point ───────────────────────── */
 import { GameApplication, ScaleMode } from '@energy8platform/game-engine';
 import { ALL_SYMBOL_IDS, DESIGN_WIDTH, DESIGN_HEIGHT } from './config/gameConfig';
+import { setGameApplication } from './runtime/gameRuntime';
 import { GameScene } from './scenes/GameScene';
 
-function showError(msg: string) {
-  const d = document.getElementById('err-display');
-  if (d) { d.style.display = 'block'; d.textContent += msg + '\n'; }
-  console.error(msg);
+
+function resolveSdkConfig(): { devMode?: boolean; debug?: boolean } {
+  if (import.meta.env.DEV) {
+    return {
+      devMode: true,
+      debug: true,
+    };
+  }
+
+  return {
+    debug: false,
+  };
 }
 
 async function bootstrap() {
-  showError('[bootstrap] starting...');
+  const sdk = resolveSdkConfig();
   const game = new GameApplication({
     container: '#game',
     designWidth: DESIGN_WIDTH,
     designHeight: DESIGN_HEIGHT,
-    scaleMode: ScaleMode.FIT,
+    scaleMode: ScaleMode.FILL,
     loading: {
       backgroundColor: 0x1a0a2e,
       backgroundGradient:
@@ -58,6 +67,15 @@ async function bootstrap() {
             { alias: 'balance_frame', src: 'assets/sprites/balance_frame.webp' },
             { alias: 'scatter_glow', src: 'assets/sprites/scatter_glow.webp' },
             { alias: 'win_summary_panel', src: 'assets/sprites/win_summary_panel.webp' },
+            // Audio
+            { alias: 'bgm', src: 'assets/audio/bgm.mp3' },
+            { alias: 'bgm_freespins', src: 'assets/audio/bgm_freespins.mp3' },
+            { alias: 'bigwin_sfx', src: 'assets/audio/bigwin_sfx.mp3' },
+            { alias: 'cascade_sfx', src: 'assets/audio/cascade_sfx.mp3' },
+            { alias: 'cluster_pop', src: 'assets/audio/cluster_pop.mp3' },
+            { alias: 'scatter_sfx', src: 'assets/audio/scatter_sfx.mp3' },
+            { alias: 'spin_sfx', src: 'assets/audio/spin_sfx.mp3' },
+            { alias: 'win_sfx', src: 'assets/audio/win_sfx.mp3' },
           ],
         },
       ],
@@ -68,7 +86,7 @@ async function bootstrap() {
       ui: 0.8,
       persist: true,
     },
-    sdk: false, // offline mode — no casino SDK
+    sdk,
     pixi: {
       backgroundColor: 0x1a0a2e,
       antialias: true,
@@ -78,19 +96,21 @@ async function bootstrap() {
     debug: false,
   });
 
+  setGameApplication(game);
+
   game.scenes.register('game', GameScene);
 
   game.on('error', (err) => {
-    showError('[engine error] ' + (err?.stack ?? err));
+    console.error('[engine error] ' + (err?.stack ?? err));
   });
-
-  showError('[bootstrap] calling game.start("game")...');
+  console.log(`[bootstrap] sdk mode: ${sdk.devMode ? 'dev-bridge' : 'host'}`);
+  console.log ('[bootstrap] calling game.start("game")...');
   try {
     await game.start('game');
-    showError('[bootstrap] game.start completed OK');
+    console.log('[bootstrap] game.start completed OK');
   } catch (err: any) {
-    showError('[bootstrap] game.start FAILED: ' + (err?.stack ?? err));
+    console.error('[bootstrap] game.start FAILED: ' + (err?.stack ?? err));
   }
 }
 
-bootstrap().catch(err => showError('[bootstrap crash] ' + (err?.stack ?? err)));
+bootstrap().catch(err => console.error('[bootstrap crash] ' + (err?.stack ?? err)));
