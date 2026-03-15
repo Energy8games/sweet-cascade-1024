@@ -9,7 +9,6 @@ import {
 import {
   GRID_COLS, GRID_ROWS, TOTAL_CELLS,
   SYMBOLS, BET_STEPS, ALL_SYMBOL_IDS,
-  BONUS_BUY_STANDARD, BONUS_BUY_SUPER,
   DESIGN_WIDTH, DESIGN_HEIGHT,
   getMultiplierColor, CLUSTER_PAYOUTS, MIN_CLUSTER_SIZE,
 } from '../config/gameConfig';
@@ -421,7 +420,7 @@ export class GameScene extends Scene {
     this.buyBtnStandard.addChild(buyFsSprite);
     // Tag text
     const buyFsTag = new Text({
-      text: `FREE SPINS\nx${BONUS_BUY_STANDARD}`,
+      text: 'FREE SPINS\nBUY',
       style: this.candyStyle(10, 0x90ee90, { align: 'center' }),
     });
     buyFsTag.anchor.set(0.5, 0);
@@ -441,7 +440,7 @@ export class GameScene extends Scene {
     buySuperSprite.anchor.set(0.5);
     this.buyBtnSuper.addChild(buySuperSprite);
     const buySuperTag = new Text({
-      text: `SUPER FS\nx${BONUS_BUY_SUPER}`,
+      text: 'SUPER FS\nBUY',
       style: this.candyStyle(10, 0xffd700, { align: 'center' }),
     });
     buySuperTag.anchor.set(0.5, 0);
@@ -883,22 +882,6 @@ export class GameScene extends Scene {
     text.text = this.autoplayActive ? `${this.autoplayRemaining}` : 'AUTO';
   }
 
-  private getTransportBet(action: string, baseBet: number): number {
-    if (action === 'free_spin') {
-      return 0;
-    }
-
-    if (action === 'buy_bonus') {
-      return baseBet * BONUS_BUY_STANDARD;
-    }
-
-    if (action === 'buy_bonus_super') {
-      return baseBet * BONUS_BUY_SUPER;
-    }
-
-    return baseBet;
-  }
-
   private async playViaSdk(action: string, bet: number, params: Record<string, unknown> = {}): Promise<PlayResultData> {
     const sdk = getGameSdk();
     if (!sdk) {
@@ -907,7 +890,7 @@ export class GameScene extends Scene {
 
     return sdk.play({
       action,
-      bet: this.getTransportBet(action, bet),
+      bet,
       roundId: this.currentRoundId ?? undefined,
       params: {
         ...params,
@@ -941,6 +924,22 @@ export class GameScene extends Scene {
 
   private async finalizePlayResult(result: PlayResultData) {
     getGameSdk()?.playAck(result);
+  }
+
+  private getBuyBonusCost(superMode: boolean): number | null {
+    const sdkConfig = getGameSdk()?.config as {
+      buy_bonus?: {
+        modes?: Record<string, { cost_multiplier?: number }>;
+      };
+    } | null;
+    const modeKey = superMode ? 'super' : 'default';
+    const costMultiplier = Number(sdkConfig?.buy_bonus?.modes?.[modeKey]?.cost_multiplier);
+
+    if (!Number.isFinite(costMultiplier) || costMultiplier <= 0) {
+      return null;
+    }
+
+    return this.currentBet * costMultiplier;
   }
 
   /* ─── Spin press ───────────────────────────────────────────── */
@@ -1652,57 +1651,61 @@ export class GameScene extends Scene {
   private async buyBonus(superMode: boolean) {
     if (this.spinning || this.inFreeSpins) return;
 
-    const cost = (superMode ? BONUS_BUY_SUPER : BONUS_BUY_STANDARD) * this.currentBet;
-    if (this.balance < cost) return;
-
-    const confirmed = await this.showBuyConfirmation(superMode, cost);
+    const confirmed = await this.showBuyConfirmation(superMode);
     if (!confirmed) return;
 
     this.spinning = true;
     this.setButtonsEnabled(false);
 
-    const playResult = await this.playViaSdk(superMode ? 'buy_bonus_super' : 'buy_bonus', this.currentBet);
-    const playData = this.extractGamePlayData(playResult);
-    if (playData.kind !== 'buy_bonus') {
-      throw new Error(`Unexpected buy bonus payload: ${playData.kind}`);
+    try {
+      const playResult = await this.playViaSdk(superMode ? 'buy_bonus_super' : 'buy_bonus', this.currentBet);
+      const playData = this.extractGamePlayData(playResult);
+      if (playData.kind !== 'buy_bonus') {
+        throw new Error(`Unexpected buy bonus payload: ${playData.kind}`);
+      }
+      const bonusData = playData.bonus as BuyBonusData;
+      const bonusGrid = bonusData.bonusGrid;
+      const session = this.getActiveSession(playResult);
+      this.setBalance(playResult.balanceAfter);
+      this.currentRoundId = playResult.roundId;
+      this.grid = bonusGrid;
+
+      // Show the grid landing (player sees symbols + scatters dropping in)
+      this.bonusBuyDrop = true;
+      await this.animateNewGrid(bonusGrid);
+      this.bonusBuyDrop = false;
+
+      // Count how many scatters actually landed
+      const scatterCount = countScatters(bonusGrid);
+
+      // Animate scatter glows so player can see them
+      await this.animateScatterWin(bonusGrid, scatterCount);
+
+      const freeSpins = bonusData.freeSpinsAwarded;
+      this.fsScatterBoost = bonusData.scatterBoost;
+
+      // Now start free spins
+      await this.startFreeSpins(session?.spinsRemaining ?? freeSpins, superMode, session?.totalWin ?? 0);
+      this.syncFreeSpinStateFromSession(session);
+      this.flushPendingBalanceDisplay();
+
+      // Begin first free spin
+      this.spinning = false;
+      await this.finalizePlayResult(playResult);
+      this.onSpinPress();
+    } catch (error) {
+      this.spinning = false;
+      this.setButtonsEnabled(true);
+      await this.showAnnouncementText(this.getBuyBonusErrorMessage(error), 0xff8080);
     }
-    const bonusData = playData.bonus as BuyBonusData;
-    const bonusGrid = bonusData.bonusGrid;
-    const session = this.getActiveSession(playResult);
-    this.setBalance(playResult.balanceAfter);
-    this.currentRoundId = playResult.roundId;
-    this.grid = bonusGrid;
-
-    // Show the grid landing (player sees symbols + scatters dropping in)
-    this.bonusBuyDrop = true;
-    await this.animateNewGrid(bonusGrid);
-    this.bonusBuyDrop = false;
-
-    // Count how many scatters actually landed
-    const scatterCount = countScatters(bonusGrid);
-
-    // Animate scatter glows so player can see them
-    await this.animateScatterWin(bonusGrid, scatterCount);
-
-    const freeSpins = bonusData.freeSpinsAwarded;
-    this.fsScatterBoost = bonusData.scatterBoost;
-
-    // Now start free spins
-    await this.startFreeSpins(session?.spinsRemaining ?? freeSpins, superMode, session?.totalWin ?? 0);
-    this.syncFreeSpinStateFromSession(session);
-    this.flushPendingBalanceDisplay();
-
-    // Begin first free spin
-    this.spinning = false;
-    await this.finalizePlayResult(playResult);
-    this.onSpinPress();
   }
 
   /* ─── Buy confirmation popup ───────────────────────────────── */
-  private showBuyConfirmation(superMode: boolean, cost: number): Promise<boolean> {
+  private showBuyConfirmation(superMode: boolean): Promise<boolean> {
     return new Promise(resolve => {
       const w = this._w;
       const h = this._h;
+      const cost = this.getBuyBonusCost(superMode);
 
       const overlay = new Container();
       this.container.addChild(overlay);
@@ -1747,26 +1750,25 @@ export class GameScene extends Scene {
 
       // Description
       const desc = new Text({
-        text: `Buy bonus for`,
+        text: 'Buy bonus for',
         style: this.candyStyle(16, 0xdddddd),
       });
       desc.anchor.set(0.5);
       desc.position.set(cx, cy - panelH * 0.1);
       overlay.addChild(desc);
 
-      // Cost amount
-      const costText = new Text({
-        text: this.formatCurrency(cost),
-        style: this.candyStyle(36, superMode ? 0xffd700 : 0x44ff88),
+      const pricingText = new Text({
+        text: cost === null ? 'PRICE UNAVAILABLE' : this.formatCurrency(cost),
+        style: this.candyStyle(28, superMode ? 0xffd700 : 0x44ff88),
       });
-      costText.anchor.set(0.5);
-      costText.position.set(cx, cy + panelH * 0.05);
-      overlay.addChild(costText);
+      pricingText.anchor.set(0.5);
+      pricingText.position.set(cx, cy + panelH * 0.03);
+      overlay.addChild(pricingText);
 
       // Multiplier info
       const multInfo = superMode
-        ? `x${BONUS_BUY_SUPER} bet · All multipliers start x2`
-        : `x${BONUS_BUY_STANDARD} bet · Standard mode`;
+        ? 'Super mode · multipliers start at x2'
+        : 'Standard mode';
       const info = new Text({
         text: multInfo,
         style: this.candyStyle(11, 0xaaaaaa),
@@ -1852,6 +1854,17 @@ export class GameScene extends Scene {
       overlay.alpha = 0;
       Tween.to(overlay, { alpha: 1 }, 200);
     });
+  }
+
+  private getBuyBonusErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      if (message.includes('balance') || message.includes('fund')) {
+        return 'INSUFFICIENT BALANCE';
+      }
+    }
+
+    return 'BONUS BUY FAILED';
   }
 
   /* ─── Paytable popup ───────────────────────────────────────── */

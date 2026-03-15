@@ -266,6 +266,10 @@ function getBonusBuyMode(action: PlayParams['action'], params: PlayParams['param
   };
 }
 
+function getBonusBuyCost(baseBet: number, costMultiplier: number): number {
+  return baseBet * costMultiplier;
+}
+
 function getBaseBet(params: PlayParams, fallback = 0): number {
   const candidate = Number(params.params?.baseBet ?? params.bet);
 
@@ -393,7 +397,7 @@ export function resolveDevBridgePlay(params: PlayParams, currentBalance: number,
     const roundId = createRoundId();
     const scatterBoost = superMode ? FS_BOOST.super : FS_BOOST.standard;
     const baseBet = getBaseBet(params, params.bet / costMultiplier);
-    const balanceAfter = currentBalance - params.bet;
+    const balanceAfter = currentBalance - getBonusBuyCost(baseBet, costMultiplier);
     const multiplierGrid = new MultiplierGrid();
     if (superMode) {
       multiplierGrid.initializeSuperMode();
