@@ -251,15 +251,22 @@ local function find_clusters(grid)
 
                     local row = row_of(index)
                     local col = col_of(index)
-                    local neighbors = {
-                        row > 0 and ((row - 1) * GRID_COLS + col) or nil,
-                        row < GRID_ROWS - 1 and ((row + 1) * GRID_COLS + col) or nil,
-                        col > 0 and (row * GRID_COLS + (col - 1)) or nil,
-                        col < GRID_COLS - 1 and (row * GRID_COLS + (col + 1)) or nil,
-                    }
+                    local neighbors = {}
+                    if row > 0 then
+                        neighbors[#neighbors + 1] = (row - 1) * GRID_COLS + col
+                    end
+                    if row < GRID_ROWS - 1 then
+                        neighbors[#neighbors + 1] = (row + 1) * GRID_COLS + col
+                    end
+                    if col > 0 then
+                        neighbors[#neighbors + 1] = row * GRID_COLS + (col - 1)
+                    end
+                    if col < GRID_COLS - 1 then
+                        neighbors[#neighbors + 1] = row * GRID_COLS + (col + 1)
+                    end
 
                     for _, neighbor in ipairs(neighbors) do
-                        if neighbor ~= nil and not visited[neighbor] and grid[neighbor + 1] == symbol_id then
+                        if not visited[neighbor] and grid[neighbor + 1] == symbol_id then
                             visited[neighbor] = true
                             queue[#queue + 1] = neighbor
                         end

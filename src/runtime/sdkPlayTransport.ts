@@ -266,17 +266,24 @@ function getBonusBuyMode(action: PlayParams['action'], params: PlayParams['param
   };
 }
 
+function getBaseBet(params: PlayParams, fallback = 0): number {
+  const candidate = Number(params.params?.baseBet ?? params.bet);
+
+  return Number.isFinite(candidate) ? candidate : fallback;
+}
+
 export function resolveDevBridgePlay(params: PlayParams, currentBalance: number, sessionStore?: DevBridgeSessionStore): Partial<PlayResultData> {
   if (params.action === 'spin') {
     const state = params.params?.state as BasePlayState | undefined;
+    const baseBet = getBaseBet(params);
     const multiplierGrid = toMultiplierGrid(state?.multiplierSpots);
-    const spinResult = resolveSpin(params.bet, multiplierGrid, MAX_WIN_MULTIPLIER, 0, false, state?.scatterBoost ?? 1);
+    const spinResult = resolveSpin(baseBet, multiplierGrid, MAX_WIN_MULTIPLIER, 0, false, state?.scatterBoost ?? 1);
     const roundId = createRoundId();
     const balanceAfter = currentBalance - params.bet + spinResult.totalWin;
     const sessionRecord = spinResult.freeSpinsAwarded > 0
       ? createSessionRecord(
           roundId,
-          params.bet,
+          baseBet,
           spinResult.freeSpinsAwarded,
           createStoredState({
             multiplierSpots: new MultiplierGrid().spots,
@@ -315,9 +322,10 @@ export function resolveDevBridgePlay(params: PlayParams, currentBalance: number,
     }
 
     const restoredState = storedSession?.state ?? getFallbackFreeSpinState(params);
+    const baseBet = getBaseBet(params, storedSession?.betAmount ?? 0) || storedSession?.betAmount || 0;
     const multiplierGrid = toMultiplierGrid(restoredState.multiplierSpots);
     const spinResult = resolveSpin(
-      params.bet,
+      baseBet,
       multiplierGrid,
       MAX_WIN_MULTIPLIER,
       restoredState.freeSpinsTotalWin ?? 0,
@@ -343,7 +351,7 @@ export function resolveDevBridgePlay(params: PlayParams, currentBalance: number,
     ];
     const sessionRecord = createSessionRecord(
       roundId,
-      params.bet,
+      baseBet,
       spinsRemaining,
       createStoredState({
         multiplierSpots: multiplierGrid.spots,
@@ -384,8 +392,8 @@ export function resolveDevBridgePlay(params: PlayParams, currentBalance: number,
     const freeSpinsAwarded = FREE_SPINS_TABLE[Math.min(scatterCount, 7)] ?? 10;
     const roundId = createRoundId();
     const scatterBoost = superMode ? FS_BOOST.super : FS_BOOST.standard;
-    const baseBet = typeof params.bet === 'number' ? params.bet : 0;
-    const balanceAfter = currentBalance - (baseBet * costMultiplier);
+    const baseBet = getBaseBet(params, params.bet / costMultiplier);
+    const balanceAfter = currentBalance - params.bet;
     const multiplierGrid = new MultiplierGrid();
     if (superMode) {
       multiplierGrid.initializeSuperMode();

@@ -32,6 +32,7 @@ export class GameScene extends Scene {
   /* ─── State ────────────────────────────────────────────────── */
   private grid: CellData[] = [];
   private balance = 0;
+  private pendingBalanceDisplay: number | null = null;
   private betIndex = 3;
   private lastWin = 0;
   private spinning = false;
@@ -51,8 +52,7 @@ export class GameScene extends Scene {
     void this.onSpinPress();
   };
   private readonly onBalanceUpdate = ({ balance }: { balance: number }) => {
-    this.balance = balance;
-    this.updateBalanceDisplay();
+    this.setBalance(balance);
   };
 
   /* ─── Display layers ───────────────────────────────────────── */
@@ -122,6 +122,28 @@ export class GameScene extends Scene {
 
   private formatCurrency(value: unknown, digits = 2): string {
     return `$${this.asNumber(value).toFixed(digits)}`;
+  }
+
+  private setBalance(balance: number, deferDisplay = this.spinning): void {
+    this.balance = balance;
+
+    if (deferDisplay) {
+      this.pendingBalanceDisplay = balance;
+      return;
+    }
+
+    this.pendingBalanceDisplay = null;
+    this.updateBalanceDisplay();
+  }
+
+  private flushPendingBalanceDisplay(): void {
+    if (this.pendingBalanceDisplay === null) {
+      return;
+    }
+
+    this.balance = this.pendingBalanceDisplay;
+    this.pendingBalanceDisplay = null;
+    this.updateBalanceDisplay();
   }
 
   /* ─── Scene lifecycle ───────────────────────────────────────── */
@@ -861,6 +883,22 @@ export class GameScene extends Scene {
     text.text = this.autoplayActive ? `${this.autoplayRemaining}` : 'AUTO';
   }
 
+  private getTransportBet(action: string, baseBet: number): number {
+    if (action === 'free_spin') {
+      return 0;
+    }
+
+    if (action === 'buy_bonus') {
+      return baseBet * BONUS_BUY_STANDARD;
+    }
+
+    if (action === 'buy_bonus_super') {
+      return baseBet * BONUS_BUY_SUPER;
+    }
+
+    return baseBet;
+  }
+
   private async playViaSdk(action: string, bet: number, params: Record<string, unknown> = {}): Promise<PlayResultData> {
     const sdk = getGameSdk();
     if (!sdk) {
@@ -869,9 +907,12 @@ export class GameScene extends Scene {
 
     return sdk.play({
       action,
-      bet,
+      bet: this.getTransportBet(action, bet),
       roundId: this.currentRoundId ?? undefined,
-      params,
+      params: {
+        ...params,
+        baseBet: bet,
+      },
     });
   }
 
@@ -927,8 +968,7 @@ export class GameScene extends Scene {
     const spinResult = deserializeSpinResult(playData.spinResult as SerializedSpinResult);
     const session = this.getActiveSession(playResult);
     const wasInFreeSpins = this.inFreeSpins;
-    this.balance = playResult.balanceAfter;
-    this.updateBalanceDisplay();
+    this.setBalance(playResult.balanceAfter);
     this.currentRoundId = playResult.roundId;
 
     // Animate the cascades
@@ -966,6 +1006,7 @@ export class GameScene extends Scene {
       this.clearMultiplierDisplay();
     }
 
+    this.flushPendingBalanceDisplay();
     this.spinning = false;
     this.setButtonsEnabled(true);
 
@@ -1628,8 +1669,7 @@ export class GameScene extends Scene {
     const bonusData = playData.bonus as BuyBonusData;
     const bonusGrid = bonusData.bonusGrid;
     const session = this.getActiveSession(playResult);
-    this.balance = playResult.balanceAfter;
-    this.updateBalanceDisplay();
+    this.setBalance(playResult.balanceAfter);
     this.currentRoundId = playResult.roundId;
     this.grid = bonusGrid;
 
@@ -1650,6 +1690,7 @@ export class GameScene extends Scene {
     // Now start free spins
     await this.startFreeSpins(session?.spinsRemaining ?? freeSpins, superMode, session?.totalWin ?? 0);
     this.syncFreeSpinStateFromSession(session);
+    this.flushPendingBalanceDisplay();
 
     // Begin first free spin
     this.spinning = false;
