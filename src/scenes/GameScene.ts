@@ -123,6 +123,10 @@ export class GameScene extends Scene {
     return `$${this.asNumber(value).toFixed(digits)}`;
   }
 
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
+  }
+
   private setBalance(balance: number, deferDisplay = this.spinning): void {
     this.balance = balance;
 
@@ -575,6 +579,7 @@ export class GameScene extends Scene {
     const w = this._w;
     const h = this._h;
     const isPortrait = h > w;
+    const compactViewport = w < 1100 || h < 700;
 
     // Background
     this.bgSprite.position.set(w / 2, h / 2);
@@ -585,7 +590,14 @@ export class GameScene extends Scene {
 
     // Calculate grid layout
     const gridAreaW = isPortrait ? w * 0.92 : w * 0.55;
-    const gridAreaH = isPortrait ? h * 0.55 : h * 0.75;
+    const reservedBottom = isPortrait
+      ? Math.max(230, h * 0.26)
+      : compactViewport
+        ? Math.max(110, h * 0.22)
+        : Math.max(86, h * 0.15);
+    const topInset = isPortrait ? Math.max(72, h * 0.09) : Math.max(24, h * 0.05);
+    const maxGridAreaH = Math.max(220, h - topInset - reservedBottom);
+    const gridAreaH = Math.min(isPortrait ? h * 0.55 : h * 0.75, maxGridAreaH);
     this.cellSize = Math.floor(Math.min(
       gridAreaW / GRID_COLS,
       gridAreaH / GRID_ROWS,
@@ -594,7 +606,9 @@ export class GameScene extends Scene {
     const gridH = GRID_ROWS * (this.cellSize + this.cellGap) - this.cellGap;
 
     this.gridX = (w - gridW) / 2;
-    this.gridY = isPortrait ? h * 0.12 : (h - gridH) / 2;
+    this.gridY = isPortrait
+      ? this.clamp(h * 0.12, topInset, h - reservedBottom - gridH)
+      : this.clamp((h - reservedBottom - gridH) / 2, topInset, h - reservedBottom - gridH);
 
     // Grid frame
     this.gridFrame.clear();
@@ -649,7 +663,7 @@ export class GameScene extends Scene {
     }
 
     /* ── Free spins label (shared) ─────────────────────── */
-    this.freeSpinsLabel.position.set(w / 2, this.gridY - 30);
+    this.freeSpinsLabel.position.set(w / 2, Math.max(32, this.gridY - 30));
   }
 
   /* ════════════════════════════════════════════════════════════
@@ -657,12 +671,19 @@ export class GameScene extends Scene {
      Bottom bar (balance – bet – win – spin) + left side buy
      ════════════════════════════════════════════════════════════ */
   private layoutDesktop(w: number, h: number, gridW: number, gridH: number) {
+    const compactViewport = w < 1100 || h < 700;
+    const edgePadding = compactViewport ? 12 : 18;
+
     /* ── Bottom bar — under game field ─────────────────────── */
-    const barH = 60;
+    const barH = compactViewport ? 54 : 60;
     const barW = gridW;
     const barX = this.gridX + gridW / 2;
     const gridBottom = this.gridY + gridH;
-    const barY = gridBottom + barH / 2 + 20;
+    const barY = this.clamp(
+      gridBottom + barH / 2 + (compactViewport ? 12 : 20),
+      barH / 2 + edgePadding,
+      h - barH / 2 - edgePadding,
+    );
 
     this.bottomPanel.position.set(barX, barY);
 
@@ -699,11 +720,17 @@ export class GameScene extends Scene {
     }
 
     /* ── SPIN — 1.5x larger, at right-bottom corner of grid ── */
-    const spinSize = Math.min(110, h * 0.15) * 1.5;
+    const spinSize = Math.min(compactViewport ? 96 : 110, h * (compactViewport ? 0.135 : 0.15)) * (compactViewport ? 1.22 : 1.5);
     const spinScale = spinSize / Math.max(this.spinBtnSprite.texture.width, this.spinBtnSprite.texture.height);
     this.spinBtnSprite.scale.set(spinScale);
     const gridRight = this.gridX + gridW;
-    this.spinBtn.position.set(gridRight + spinSize * 0.55, gridBottom - spinSize * 0.3);
+    const spinX = this.clamp(gridRight + spinSize * 0.55, spinSize * 0.58 + edgePadding, w - spinSize * 0.58 - edgePadding);
+    const spinY = this.clamp(
+      gridBottom - spinSize * 0.22,
+      spinSize * 0.55 + edgePadding,
+      barY - barH / 2 - spinSize * 0.5 - 10,
+    );
+    this.spinBtn.position.set(spinX, spinY);
 
     const gloss = (this.spinBtn as any)._gloss as Graphics;
     gloss.clear();
@@ -715,21 +742,28 @@ export class GameScene extends Scene {
     const autoSize = spinSize * 0.55;
     const autoCookie = this.autoBtn.getChildAt(1) as Sprite;
     autoCookie.scale.set(autoSize / Math.max(autoCookie.texture.width, autoCookie.texture.height));
-    this.autoBtn.position.set(this.spinBtn.x, this.spinBtn.y - spinSize * 0.85);
+    this.autoBtn.position.set(this.spinBtn.x, this.clamp(this.spinBtn.y - spinSize * 0.82, autoSize * 0.6 + edgePadding, this.spinBtn.y - autoSize * 0.75));
 
     /* ── BUY BONUS — left side of grid, mirroring auto/spin ── */
-    const buySize = Math.min(70, h * 0.1) * 2;
-    const buyCenterX = this.gridX - buySize * 0.65;
+    const buySize = Math.min(compactViewport ? 58 : 70, h * 0.1) * (compactViewport ? 1.55 : 2);
+    const buyCenterX = Math.max(edgePadding + buySize * 0.52, this.gridX - buySize * 0.65);
 
     this.scaleBuyBtn(this.buyBtnStandard, buySize);
-    this.buyBtnStandard.position.set(buyCenterX, this.autoBtn.y - buySize * 0.8);
+    this.buyBtnStandard.position.set(
+      buyCenterX,
+      this.clamp(this.autoBtn.y - buySize * 0.8, buySize * 0.6 + edgePadding, h - buySize * 2.5 - edgePadding),
+    );
 
     this.scaleBuyBtn(this.buyBtnSuper, buySize * 1.1);
-    this.buyBtnSuper.position.set(buyCenterX, this.spinBtn.y);
+    this.buyBtnSuper.position.set(
+      buyCenterX,
+      this.clamp(this.spinBtn.y, this.buyBtnStandard.y + buySize * 1.05, h - buySize * 1.15 - edgePadding),
+    );
 
     /* ── Paytable + Mute buttons — further left of grid ────── */
-    this.paytableBtn.position.set(this.gridX - 45, this.gridY + 42);
-    this.muteBtn.position.set(this.gridX - 45, this.gridY + 92);
+    const iconX = Math.max(34, this.gridX - 45);
+    this.paytableBtn.position.set(iconX, this.clamp(this.gridY + 42, 34, h - 84));
+    this.muteBtn.position.set(iconX, this.clamp(this.gridY + 92, 70, h - 34));
   }
 
   /* ════════════════════════════════════════════════════════════
@@ -738,40 +772,14 @@ export class GameScene extends Scene {
      ════════════════════════════════════════════════════════════ */
   private layoutMobile(w: number, h: number, gridW: number, gridH: number) {
     const gridBottom = this.gridY + gridH;
-
-    /* ── SPIN — centered below grid ──────────────────────── */
-    const spinSize = Math.min(w * 0.22, 100) * 1.5;
-    const spinScale = spinSize / Math.max(this.spinBtnSprite.texture.width, this.spinBtnSprite.texture.height);
-    this.spinBtnSprite.scale.set(spinScale);
-    const spinY = gridBottom + spinSize * 0.55 + 10;
-    this.spinBtn.position.set(w / 2, spinY);
-
-    const gloss = (this.spinBtn as any)._gloss as Graphics;
-    gloss.clear();
-    const glossR = spinSize * 0.4;
-    gloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
-    gloss.fill({ color: 0xffffff, alpha: 0.25 });
-
-    /* ── AUTO — right of spin ────────────────────────────── */
-    const autoSize = spinSize * 0.45;
-    const autoCookie = this.autoBtn.getChildAt(1) as Sprite;
-    autoCookie.scale.set(autoSize / Math.max(autoCookie.texture.width, autoCookie.texture.height));
-    this.autoBtn.position.set(this.spinBtn.x + spinSize * 0.7, spinY);
-
-    /* ── BUY BONUS — left of spin ────────────────────────── */
-    const buySize = Math.min(50, w * 0.1) * 1.6;
-
-    this.scaleBuyBtn(this.buyBtnStandard, buySize);
-    this.buyBtnStandard.position.set(this.spinBtn.x - spinSize * 0.7, spinY - buySize * 0.35);
-
-    this.scaleBuyBtn(this.buyBtnSuper, buySize);
-    this.buyBtnSuper.position.set(this.spinBtn.x - spinSize * 0.7, spinY + buySize * 1.7);
+    const sideInset = Math.max(12, w * 0.03);
+    const bottomInset = Math.max(8, h * 0.015);
 
     /* ── Bottom bar — balance / bet / win ─────────────────── */
-    const barH = 50;
-    const barW = w * 0.96;
+    const barH = Math.min(58, Math.max(48, h * 0.06));
+    const barW = w - sideInset * 2;
     const barX = w / 2;
-    const barY = h - barH / 2 - 4;
+    const barY = h - barH / 2 - bottomInset;
 
     this.bottomPanel.position.set(barX, barY);
 
@@ -810,10 +818,64 @@ export class GameScene extends Scene {
       this.winValueLabel.position.set(0, 10);
     }
 
+    const controlTop = gridBottom + Math.max(14, h * 0.018);
+    const controlBottom = barY - barH / 2 - Math.max(18, h * 0.022);
+    const controlBandHeight = Math.max(132, controlBottom - controlTop);
+
+    /* ── SPIN — centered below grid ──────────────────────── */
+    const spinSize = this.clamp(
+      Math.min(w * 0.24, controlBandHeight * 0.62),
+      Math.min(90, w * 0.2),
+      132,
+    );
+    const spinScale = spinSize / Math.max(this.spinBtnSprite.texture.width, this.spinBtnSprite.texture.height);
+    this.spinBtnSprite.scale.set(spinScale);
+    const spinY = this.clamp(
+      controlTop + controlBandHeight * 0.45,
+      controlTop + spinSize * 0.52,
+      controlBottom - spinSize * 0.52,
+    );
+    this.spinBtn.position.set(w / 2, spinY);
+
+    const gloss = (this.spinBtn as any)._gloss as Graphics;
+    gloss.clear();
+    const glossR = spinSize * 0.4;
+    gloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
+    gloss.fill({ color: 0xffffff, alpha: 0.25 });
+
+    /* ── AUTO — right of spin ────────────────────────────── */
+    const autoSize = spinSize * 0.42;
+    const autoCookie = this.autoBtn.getChildAt(1) as Sprite;
+    autoCookie.scale.set(autoSize / Math.max(autoCookie.texture.width, autoCookie.texture.height));
+    this.autoBtn.position.set(
+      this.clamp(this.spinBtn.x + spinSize * 0.74, sideInset + autoSize * 0.55, w - sideInset - autoSize * 0.55),
+      this.clamp(spinY, controlTop + autoSize * 0.55, controlBottom - autoSize * 0.55),
+    );
+
+    /* ── BUY BONUS — left of spin ────────────────────────── */
+    const buySize = this.clamp(Math.min(58, w * 0.13), 46, 60);
+
+    this.scaleBuyBtn(this.buyBtnStandard, buySize);
+    const buyX = this.clamp(this.spinBtn.x - spinSize * 0.78, sideInset + buySize * 0.55, w - sideInset - buySize * 0.55);
+    this.buyBtnStandard.position.set(
+      buyX,
+      this.clamp(spinY - buySize * 0.82, controlTop + buySize * 0.5, controlBottom - buySize * 1.7),
+    );
+
+    this.scaleBuyBtn(this.buyBtnSuper, buySize);
+    this.buyBtnSuper.position.set(
+      buyX,
+      this.clamp(this.buyBtnStandard.y + buySize * 1.68, this.buyBtnStandard.y + buySize * 1.1, controlBottom - buySize * 0.55),
+    );
+
     /* ── Paytable + Mute — below SuperFS and Auto ─────────── */
     const superFsBottom = this.buyBtnSuper.y + buySize * 0.7;
     const autoBottom = this.autoBtn.y + autoSize * 0.6;
-    const iconRowY = Math.max(superFsBottom, autoBottom) + 78;
+    const iconRowY = this.clamp(
+      Math.max(superFsBottom, autoBottom) + Math.max(42, h * 0.045),
+      controlTop + 36,
+      controlBottom - 24,
+    );
     this.paytableBtn.position.set(this.buyBtnStandard.x, iconRowY);
     this.muteBtn.position.set(this.autoBtn.x, iconRowY);
   }
