@@ -92,6 +92,8 @@ export class GameScene extends Scene {
   private betPlusBtn!: Container;
   private paytableBtn!: Container;
   private muteBtn!: Container;
+  private panelGlass!: Graphics;
+  private spinGloss!: Graphics;
 
   /* ─── Candy font style factory ─────────────────────────────── */
   private static readonly CANDY_FONT = '"Fredoka One", "Baloo 2", "Titan One", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif';
@@ -153,6 +155,7 @@ export class GameScene extends Scene {
   async onEnter() {
     this.grid = generateGrid(true);
     this.balance = getGameSdk()?.balance ?? this.balance;
+    this.restoreBetFromSession();
     this.buildScene();
     this.buildUI();
     this.layoutAll();
@@ -160,6 +163,34 @@ export class GameScene extends Scene {
     this.playMusic('bgm');
     getInputManager()?.on('keydown', this.onSpaceSpin);
     getGameSdk()?.on('balanceUpdate', this.onBalanceUpdate);
+    await this.resumeSessionIfNeeded();
+  }
+
+  private restoreBetFromSession(): void {
+    const session = getGameSdk()?.session;
+    if (!session?.betAmount) return;
+
+    const idx = BET_STEPS.indexOf(session.betAmount);
+    if (idx !== -1) {
+      this.betIndex = idx;
+    } else {
+      // Find the closest bet level that doesn't exceed the session bet
+      const closest = BET_STEPS.reduce((best, step, i) =>
+        Math.abs(step - session.betAmount!) < Math.abs(BET_STEPS[best] - session.betAmount!) ? i : best, 0);
+      this.betIndex = closest;
+    }
+  }
+
+  private async resumeSessionIfNeeded(): Promise<void> {
+    const session = getGameSdk()?.session;
+    if (!session || session.completed || session.spinsRemaining <= 0) return;
+
+    this.currentRoundId = session.roundId;
+    this.freeSpinsRemaining = session.spinsRemaining;
+    this.freeSpinsTotalWin = session.totalWin;
+
+    await this.startFreeSpins(session.spinsRemaining, false, session.totalWin);
+    this.onSpinPress();
   }
 
   async onExit() {
@@ -251,9 +282,8 @@ export class GameScene extends Scene {
     this.bottomPanel.addChild(this.bottomPanelSprite);
 
     // Frosted glass overlay on panel
-    const panelGlass = new Graphics();
-    this.bottomPanel.addChild(panelGlass);
-    (this.bottomPanel as any)._glass = panelGlass;
+    this.panelGlass = new Graphics();
+    this.bottomPanel.addChild(this.panelGlass);
 
     /* ── Balance block (left) ────────────────────────────── */
     const balanceBlock = new Container();
@@ -379,9 +409,8 @@ export class GameScene extends Scene {
     this.spinBtn.addChild(this.spinBtnSprite);
 
     // Gloss highlight overlay
-    const spinGloss = new Graphics();
-    this.spinBtn.addChild(spinGloss);
-    (this.spinBtn as any)._gloss = spinGloss;
+    this.spinGloss = new Graphics();
+    this.spinBtn.addChild(this.spinGloss);
 
     this.addExpandedHitArea(this.spinBtn, 1.18);
     this.spinBtn.on('pointerdown', () => {
@@ -689,10 +718,9 @@ export class GameScene extends Scene {
 
     this.bottomPanel.position.set(barX, barY);
 
-    const glass = (this.bottomPanel as any)._glass as Graphics;
-    glass.clear();
-    glass.roundRect(-barW / 2, -barH / 2, barW, barH, 16);
-    glass.fill({ color: 0x1a0a2e, alpha: 0.55 });
+    this.panelGlass.clear();
+    this.panelGlass.roundRect(-barW / 2, -barH / 2, barW, barH, 16);
+    this.panelGlass.fill({ color: 0x1a0a2e, alpha: 0.55 });
 
     /* Left: BALANCE */
     const balBlock = this.bottomPanel.getChildByName('balanceBlock') as Container;
@@ -734,11 +762,10 @@ export class GameScene extends Scene {
     );
     this.spinBtn.position.set(spinX, spinY);
 
-    const gloss = (this.spinBtn as any)._gloss as Graphics;
-    gloss.clear();
+    this.spinGloss.clear();
     const glossR = spinSize * 0.4;
-    gloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
-    gloss.fill({ color: 0xffffff, alpha: 0.25 });
+    this.spinGloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
+    this.spinGloss.fill({ color: 0xffffff, alpha: 0.25 });
 
     /* ── AUTO — 2x bigger, above spin ────────────────────── */
     const autoSize = spinSize * 0.55;
@@ -788,10 +815,9 @@ export class GameScene extends Scene {
     const psTex = this.bottomPanelSprite.texture;
     this.bottomPanelSprite.scale.set(barW / psTex.width, barH / psTex.height);
 
-    const glass = (this.bottomPanel as any)._glass as Graphics;
-    glass.clear();
-    glass.roundRect(-barW / 2, -barH / 2, barW, barH, 12);
-    glass.fill({ color: 0x1a0a2e, alpha: 0.55 });
+    this.panelGlass.clear();
+    this.panelGlass.roundRect(-barW / 2, -barH / 2, barW, barH, 12);
+    this.panelGlass.fill({ color: 0x1a0a2e, alpha: 0.55 });
 
     /* Balance — left */
     const balBlock = this.bottomPanel.getChildByName('balanceBlock') as Container;
@@ -839,11 +865,10 @@ export class GameScene extends Scene {
     );
     this.spinBtn.position.set(w / 2, spinY);
 
-    const gloss = (this.spinBtn as any)._gloss as Graphics;
-    gloss.clear();
+    this.spinGloss.clear();
     const glossR = spinSize * 0.4;
-    gloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
-    gloss.fill({ color: 0xffffff, alpha: 0.25 });
+    this.spinGloss.ellipse(0, -glossR * 0.2, glossR * 0.55, glossR * 0.3);
+    this.spinGloss.fill({ color: 0xffffff, alpha: 0.25 });
 
     /* ── AUTO — right of spin ────────────────────────────── */
     const autoSize = spinSize * 0.42;
@@ -991,13 +1016,10 @@ export class GameScene extends Scene {
   }
 
   private getBuyBonusCost(superMode: boolean): number | null {
-    const sdkConfig = getGameSdk()?.config as {
-      buy_bonus?: {
-        modes?: Record<string, { cost_multiplier?: number }>;
-      };
-    } | null;
+    const sdkConfig = getGameSdk()?.config;
     const modeKey = superMode ? 'super' : 'default';
-    const costMultiplier = Number(sdkConfig?.buy_bonus?.modes?.[modeKey]?.cost_multiplier);
+    const buyBonus = sdkConfig?.['buy_bonus'] as { modes?: Record<string, { cost_multiplier?: number }> } | undefined;
+    const costMultiplier = Number(buyBonus?.modes?.[modeKey]?.cost_multiplier);
 
     if (!Number.isFinite(costMultiplier) || costMultiplier <= 0) {
       return null;

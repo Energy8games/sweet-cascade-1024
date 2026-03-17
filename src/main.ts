@@ -108,8 +108,8 @@ async function bootstrap() {
   try {
     await game.start('game');
     console.log('[bootstrap] game.start completed OK');
-  } catch (err: any) {
-    console.error('[bootstrap] game.start FAILED: ' + (err?.stack ?? err));
+  } catch (err: unknown) {
+    console.error('[bootstrap] game.start FAILED: ' + (err instanceof Error ? err.stack ?? err.message : String(err)));
   }
 }
 
