@@ -521,8 +521,9 @@ export class GameScene extends Scene {
 
   /* ─── Squash & Stretch animation for buttons ───────────────── */
   private async animateButtonPress(btn: Container) {
-    const origSx = btn.scale.x;
-    const origSy = btn.scale.y;
+    btn.scale.set(1, 1);
+    const origSx = 1;
+    const origSy = 1;
     // Squash
     await Tween.to(btn, {
       'scale.x': origSx * 1.15,
@@ -543,8 +544,9 @@ export class GameScene extends Scene {
   /* ─── Spin button press — Jelly squash + swirl kick ────────── */
   private async animateSpinButtonPress() {
     const btn = this.spinBtn;
-    const origSx = btn.scale.x;
-    const origSy = btn.scale.y;
+    btn.scale.set(1, 1);
+    const origSx = 1;
+    const origSy = 1;
     // Heavy squash (jelly effect)
     await Tween.to(btn, {
       'scale.x': origSx * 1.25,
