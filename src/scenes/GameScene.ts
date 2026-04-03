@@ -46,8 +46,10 @@ export class GameScene extends Scene {
   private muted = false;
   private currentRoundId: string | null = null;
   private freeSpinsSuperMode = false;
+  private winPopupActive = false;
   private readonly onSpaceSpin = ({ code }: { code: string; key: string }) => {
     if (code !== 'Space') return;
+    if (this.winPopupActive) return;
     void this.onSpinPress();
   };
   private readonly onBalanceUpdate = ({ balance }: { balance: number }) => {
@@ -954,6 +956,7 @@ export class GameScene extends Scene {
 
   /* ─── Autoplay ─────────────────────────────────────────────── */
   private toggleAutoplay() {
+    if (this.winPopupActive) return;
     if (this.autoplayActive) {
       this.autoplayActive = false;
       this.autoplayRemaining = 0;
@@ -1030,7 +1033,7 @@ export class GameScene extends Scene {
 
   /* ─── Spin press ───────────────────────────────────────────── */
   private async onSpinPress() {
-    if (this.spinning) return;
+    if (this.spinning || this.winPopupActive) return;
     if (this.balance < this.currentBet && !this.inFreeSpins) return;
 
     this.spinning = true;
@@ -1425,22 +1428,29 @@ export class GameScene extends Scene {
 
   /* ─── Win display ──────────────────────────────────────────── */
   private async showWinAmount(amount: number, bet: number) {
-    const mult = amount / bet;
-    this.winValueLabel.text = this.formatCurrency(amount);
-    await Tween.to(this.winValueLabel, { alpha: 1 }, 300);
+    this.winPopupActive = true;
+    try {
+      const mult = amount / bet;
+      this.winValueLabel.text = this.formatCurrency(amount);
+      await Tween.to(this.winValueLabel, { alpha: 1 }, 300);
 
-    if (mult >= 10) {
-      this.playSound('bigwin_sfx', 'sfx', 0.8);
-      await this.showBigWinOverlay(amount, mult);
-    } else {
-      this.playSound('win_sfx', 'sfx', 0.6);
+      if (mult >= 10) {
+        this.playSound('bigwin_sfx', 'sfx', 0.8);
+        await this.showBigWinOverlay(amount, mult);
+      } else {
+        this.playSound('win_sfx', 'sfx', 0.6);
+      }
+
+      await Tween.delay(600);
+    } finally {
+      this.winPopupActive = false;
     }
-
-    await Tween.delay(600);
   }
 
   /* ─── Big win overlay ──────────────────────────────────────── */
   private async showBigWinOverlay(amount: number, mult: number) {
+    this.winPopupActive = true;
+    try {
     const w = this._w;
     const h = this._h;
 
@@ -1495,6 +1505,9 @@ export class GameScene extends Scene {
     dimmer.destroy();
     tierSprite.destroy();
     amountText.destroy();
+    } finally {
+      this.winPopupActive = false;
+    }
   }
 
   private spawnCoinParticles(w: number, h: number) {
@@ -1641,6 +1654,8 @@ export class GameScene extends Scene {
 
   /* ─── Win summary popup after free spins ────────────────────── */
   private async showWinSummary(totalWin: number): Promise<void> {
+    this.winPopupActive = true;
+    try {
     const w = this._w;
     const h = this._h;
 
@@ -1718,6 +1733,9 @@ export class GameScene extends Scene {
     // Fade out
     await Tween.to(overlay, { alpha: 0 }, 400);
     overlay.destroy({ children: true });
+    } finally {
+      this.winPopupActive = false;
+    }
   }
 
   private updateFreeSpinsLabel() {
@@ -2162,5 +2180,8 @@ export class GameScene extends Scene {
     this.buyBtnSuper.alpha = enabled ? 1 : 0.5;
     (this.buyBtnStandard.getChildAt(1) as Sprite).tint = tint;
     (this.buyBtnSuper.getChildAt(1) as Sprite).tint = tint;
+
+    this.autoBtn.eventMode = mode;
+    this.autoBtn.alpha = enabled ? 1 : 0.5;
   }
 }
